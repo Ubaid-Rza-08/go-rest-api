@@ -1,0 +1,101 @@
+version: '3.9'
+
+services:
+
+  postgres:
+    image: postgres:17-alpine
+
+    container_name: postgres_db
+
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: go_rest_api
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-sql:/docker-entrypoint-initdb.d
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - microservices_network
+
+  user-service:
+    build:
+      context: ./user-service
+
+    container_name: user_service
+
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    env_file:
+      - ./user-service/.env
+
+    ports:
+      - "8080:8080"
+
+    networks:
+      - microservices_network
+
+  post-service:
+    build:
+      context: ./post-service
+
+    container_name: post_service
+
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    env_file:
+      - ./post-service/.env
+
+    ports:
+      - "8081:8081"
+
+    networks:
+      - microservices_network
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+
+    container_name: api_gateway
+
+    restart: unless-stopped
+
+    depends_on:
+      - user-service
+      - post-service
+
+    env_file:
+      - ./api-gateway/.env
+
+    ports:
+      - "8000:8000"
+
+    networks:
+      - microservices_network
+
+volumes:
+  postgres_data:
+
+networks:
+  microservices_network:
+    driver: bridge
