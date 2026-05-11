@@ -18,16 +18,18 @@ import (
 func main() {
 
 	// --------------------------------------------------
-	// Load configuration
+	// Load Config
 	// --------------------------------------------------
+
 	cfg := config.Load()
 
 	// --------------------------------------------------
-	// Database connection
+	// Database
 	// --------------------------------------------------
+
 	db, err := database.NewPostgres(cfg.DBURL)
 	if err != nil {
-		log.Fatal("DATABASE CONNECTION ERROR:", err)
+		log.Fatal(err)
 	}
 
 	defer db.Close()
@@ -35,8 +37,9 @@ func main() {
 	log.Println("DATABASE CONNECTED")
 
 	// --------------------------------------------------
-	// Dependency Injection
+	// Dependencies
 	// --------------------------------------------------
+
 	postRepo := repository.NewPostRepository(db)
 
 	postService := service.NewPostService(postRepo)
@@ -46,32 +49,38 @@ func main() {
 	// --------------------------------------------------
 	// Gin Router
 	// --------------------------------------------------
+
 	r := gin.New()
 
-	// Middleware
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 
-	// Fix proxy warning
+	// IMPORTANT FIXES
 	r.SetTrustedProxies(nil)
+
+	r.RedirectTrailingSlash = false
+	r.RedirectFixedPath = false
 
 	// --------------------------------------------------
 	// Health Check
 	// --------------------------------------------------
+
 	r.GET("/health", func(c *gin.Context) {
+
 		c.JSON(http.StatusOK, gin.H{
-			"status":  "ok",
-			"service": "post-service",
+			"status": "post-service running",
 		})
 	})
 
 	// --------------------------------------------------
 	// API Routes
 	// --------------------------------------------------
+
 	api := r.Group("/api/v1")
 
-	// Protected routes
-	api.Use(middleware.Authenticate(cfg.JWTSecret))
+	api.Use(
+		middleware.Authenticate(cfg.JWTSecret),
+	)
 
 	{
 		api.POST("/posts", postHandler.Create)
@@ -88,6 +97,7 @@ func main() {
 	// --------------------------------------------------
 	// HTTP Server
 	// --------------------------------------------------
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           r,
@@ -102,9 +112,10 @@ func main() {
 	// --------------------------------------------------
 	// Start Server
 	// --------------------------------------------------
+
 	if err := srv.ListenAndServe(); err != nil &&
 		err != http.ErrServerClosed {
 
-		log.Fatal("SERVER ERROR:", err)
+		log.Fatal(err)
 	}
 }
