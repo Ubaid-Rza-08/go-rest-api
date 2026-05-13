@@ -11,23 +11,21 @@ import (
 	"github.com/Ubaid-Rza-08/post-service/internal/database"
 	"github.com/Ubaid-Rza-08/post-service/internal/handlers"
 	"github.com/Ubaid-Rza-08/post-service/internal/middleware"
+	redisClient "github.com/Ubaid-Rza-08/post-service/internal/redis"
 	"github.com/Ubaid-Rza-08/post-service/internal/repository"
 	"github.com/Ubaid-Rza-08/post-service/internal/service"
 )
 
 func main() {
 
-	// --------------------------------------------------
-	// Load Config
-	// --------------------------------------------------
-
 	cfg := config.Load()
 
-	// --------------------------------------------------
-	// Database
-	// --------------------------------------------------
+	// -----------------------------------------
+	// DATABASE
+	// -----------------------------------------
 
 	db, err := database.NewPostgres(cfg.DBURL)
+
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -36,34 +34,42 @@ func main() {
 
 	log.Println("DATABASE CONNECTED")
 
-	// --------------------------------------------------
-	// Dependencies
-	// --------------------------------------------------
+	// -----------------------------------------
+	// REDIS
+	// -----------------------------------------
+
+	redis := redisClient.NewRedisClient()
+
+	// -----------------------------------------
+	// DEPENDENCIES
+	// -----------------------------------------
 
 	postRepo := repository.NewPostRepository(db)
 
-	postService := service.NewPostService(postRepo)
+	postService := service.NewPostService(
+		postRepo,
+		redis,
+	)
 
 	postHandler := handlers.NewPostHandler(postService)
 
-	// --------------------------------------------------
-	// Gin Router
-	// --------------------------------------------------
+	// -----------------------------------------
+	// GIN
+	// -----------------------------------------
 
 	r := gin.New()
 
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 
-	// IMPORTANT FIXES
 	r.SetTrustedProxies(nil)
 
 	r.RedirectTrailingSlash = false
 	r.RedirectFixedPath = false
 
-	// --------------------------------------------------
-	// Health Check
-	// --------------------------------------------------
+	// -----------------------------------------
+	// HEALTH
+	// -----------------------------------------
 
 	r.GET("/health", func(c *gin.Context) {
 
@@ -72,9 +78,9 @@ func main() {
 		})
 	})
 
-	// --------------------------------------------------
-	// API Routes
-	// --------------------------------------------------
+	// -----------------------------------------
+	// API
+	// -----------------------------------------
 
 	api := r.Group("/api/v1")
 
@@ -94,9 +100,9 @@ func main() {
 		api.DELETE("/posts/:id", postHandler.Delete)
 	}
 
-	// --------------------------------------------------
-	// HTTP Server
-	// --------------------------------------------------
+	// -----------------------------------------
+	// HTTP SERVER
+	// -----------------------------------------
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -108,10 +114,6 @@ func main() {
 	}
 
 	log.Println("POST SERVICE RUNNING ON PORT:", cfg.Port)
-
-	// --------------------------------------------------
-	// Start Server
-	// --------------------------------------------------
 
 	if err := srv.ListenAndServe(); err != nil &&
 		err != http.ErrServerClosed {

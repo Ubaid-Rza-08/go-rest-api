@@ -1,7 +1,13 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"log"
+	"time"
+
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/Ubaid-Rza-08/post-service/internal/models"
 	"github.com/Ubaid-Rza-08/post-service/internal/repository"
@@ -10,11 +16,19 @@ import (
 var ErrForbidden = errors.New("forbidden")
 
 type PostService struct {
-	repo *repository.PostRepository
+	repo  *repository.PostRepository
+	redis *goredis.Client
 }
 
-func NewPostService(repo *repository.PostRepository) *PostService {
-	return &PostService{repo: repo}
+func NewPostService(
+	repo *repository.PostRepository,
+	redis *goredis.Client,
+) *PostService {
+
+	return &PostService{
+		repo:  repo,
+		redis: redis,
+	}
 }
 
 func (s *PostService) Create(
@@ -30,15 +44,114 @@ func (s *PostService) Create(
 
 	err := s.repo.Create(post)
 
-	return post, err
+	if err != nil {
+		return nil, err
+	}
+
+	// INVALIDATE CACHE
+	s.redis.Del(context.Background(), "posts:all")
+
+	return post, nil
 }
 
 func (s *PostService) GetAll() ([]models.Post, error) {
-	return s.repo.GetAll()
+
+	cacheKey := "posts:all"
+
+	// --------------------------------
+	// CHECK REDIS CACHE
+	// --------------------------------
+
+	cachedPosts, err := s.redis.Get(
+		context.Background(),
+		cacheKey,
+	).Result()
+
+	if err == nil {
+
+		var posts []models.Post
+
+		json.Unmarshal([]byte(cachedPosts), &posts)
+
+		log.Println("POSTS FETCHED FROM REDIS")
+
+		return posts, nil
+	}
+
+	// --------------------------------
+	// CACHE MISS → DATABASE
+	// --------------------------------
+
+	posts, err := s.repo.GetAll()
+
+	if err != nil {
+		return nil, err
+	}
+
+	// --------------------------------
+	// SAVE TO REDIS
+	// --------------------------------
+
+	jsonData, _ := json.Marshal(posts)
+
+	s.redis.Set(
+		context.Background(),
+		cacheKey,
+		jsonData,
+		5*time.Minute,
+	)
+
+	log.Println("POSTS FETCHED FROM POSTGRES")
+
+	return posts, nil
 }
 
 func (s *PostService) GetByID(id string) (*models.Post, error) {
-	return s.repo.GetByID(id)
+
+	cacheKey := "post:" + id
+
+	// --------------------------------
+	// CHECK REDIS
+	// --------------------------------
+
+	cachedPost, err := s.redis.Get(
+		context.Background(),
+		cacheKey,
+	).Result()
+
+	if err == nil {
+
+		var post models.Post
+
+		json.Unmarshal([]byte(cachedPost), &post)
+
+		log.Println("POST FETCHED FROM REDIS")
+
+		return &post, nil
+	}
+
+	// --------------------------------
+	// CACHE MISS → DATABASE
+	// --------------------------------
+
+	post, err := s.repo.GetByID(id)
+
+	if err != nil {
+		return nil, err
+	}
+
+	jsonData, _ := json.Marshal(post)
+
+	s.redis.Set(
+		context.Background(),
+		cacheKey,
+		jsonData,
+		5*time.Minute,
+	)
+
+	log.Println("POST FETCHED FROM POSTGRES")
+
+	return post, nil
 }
 
 func (s *PostService) Update(
@@ -48,6 +161,7 @@ func (s *PostService) Update(
 ) (*models.Post, error) {
 
 	post, err := s.repo.GetByID(id)
+
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +180,15 @@ func (s *PostService) Update(
 
 	err = s.repo.Update(post)
 
-	return post, err
+	if err != nil {
+		return nil, err
+	}
+
+	// INVALIDATE CACHE
+	s.redis.Del(context.Background(), "posts:all")
+	s.redis.Del(context.Background(), "post:"+id)
+
+	return post, nil
 }
 
 func (s *PostService) Delete(
@@ -75,6 +197,7 @@ func (s *PostService) Delete(
 ) error {
 
 	post, err := s.repo.GetByID(id)
+
 	if err != nil {
 		return err
 	}
@@ -83,5 +206,15 @@ func (s *PostService) Delete(
 		return ErrForbidden
 	}
 
-	return s.repo.Delete(id)
+	err = s.repo.Delete(id)
+
+	if err != nil {
+		return err
+	}
+
+	// INVALIDATE CACHE
+	s.redis.Del(context.Background(), "posts:all")
+	s.redis.Del(context.Background(), "post:"+id)
+
+	return nil
 }
